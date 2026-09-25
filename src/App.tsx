@@ -1,19 +1,28 @@
 import { useEffect, useRef, useState } from 'react'
-import { ArrowDown, BriefcaseBusiness, Check, Copy, Download, Github, GraduationCap, Mail, Menu, X } from 'lucide-react'
-import { email, experience, github, projects, stack } from './content'
+import { ArrowDown, ArrowLeft, ArrowRight, Check, Copy, Download, Github, Mail, Menu, X } from 'lucide-react'
+import { email, experience, github, projects, selectedProjectIds, stack } from './content'
+import ProjectReader from './ProjectReader'
 
 const sections = [
-  { id: 'home', label: 'Intro' }, { id: 'about', label: 'About' },
-  { id: 'experience', label: 'Experience' }, { id: 'projects', label: 'Projects' },
-  { id: 'skills', label: 'Skills' }, { id: 'contact', label: 'Contact' },
+  { id: 'home', label: 'Work' }, { id: 'experience', label: 'Experience' },
+  { id: 'about', label: 'About' }, { id: 'contact', label: 'Contact' },
 ]
+type Filter = 'Selected' | 'All' | 'Web' | 'Mobile' | 'Services'
+const readProjectHash = () => projects.find(project => window.location.hash === `#work-${project.id}`)?.id ?? null
 
 function App() {
   const [loading, setLoading] = useState(true)
-  const [menuOpen, setMenuOpen] = useState(false)
   const [active, setActive] = useState('home')
+  const [filter, setFilter] = useState<Filter>(() => {
+    const id = readProjectHash()
+    return id && !selectedProjectIds.includes(id) ? 'All' : 'Selected'
+  })
+  const [selectedId, setSelectedId] = useState<string | null>(readProjectHash)
+  const [menuOpen, setMenuOpen] = useState(false)
   const [copyStatus, setCopyStatus] = useState('')
   const menuButton = useRef<HTMLButtonElement>(null)
+  const returnFocus = useRef<HTMLElement | null>(null)
+  const returnHash = useRef('#home')
   const copyTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
 
   useEffect(() => {
@@ -22,66 +31,78 @@ function App() {
     let timer: ReturnType<typeof setTimeout>
     const finish = () => {
       clearTimeout(timer)
-      timer = setTimeout(() => { if (!cancelled) setLoading(false) }, Math.max(0, 650 - (performance.now() - start)))
+      timer = setTimeout(() => { if (!cancelled) setLoading(false) }, Math.max(0, 450 - (performance.now() - start)))
     }
     timer = setTimeout(finish, 1600)
     void document.fonts.ready.then(() => { if (!cancelled) finish() })
-    return () => { cancelled = true; clearTimeout(timer) }
+    return () => { cancelled = true; clearTimeout(timer); clearTimeout(copyTimer.current) }
   }, [])
 
   useEffect(() => {
     let frame = 0
-    let mounted = true
     const update = () => {
-      const marker = window.innerHeight * .4
-      let current = sections[0].id
+      let current = 'home'
       for (const section of sections) {
-        const element = document.getElementById(section.id)
-        if (element && element.getBoundingClientRect().top <= marker) current = section.id
+        if ((document.getElementById(section.id)?.getBoundingClientRect().top ?? Infinity) <= window.innerHeight * .35) current = section.id
       }
-      if (window.innerHeight + window.scrollY >= document.documentElement.scrollHeight - 5) current = 'contact'
+      if (window.scrollY + window.innerHeight >= document.documentElement.scrollHeight - 5) current = 'contact'
       setActive(current)
     }
     const onScroll = () => { cancelAnimationFrame(frame); frame = requestAnimationFrame(update) }
-    update()
-    const initialHash = window.location.hash.slice(1)
-    if (sections.some(section => section.id === initialHash)) {
-      void document.fonts.ready.then(() => {
-        if (mounted && window.location.hash.slice(1) === initialHash) {
-          document.getElementById(initialHash)?.scrollIntoView({ behavior: 'instant' })
-          update()
-        }
-      })
+    const restore = () => {
+      const projectId = readProjectHash()
+      setSelectedId(projectId)
     }
+    restore()
+    update()
+    window.addEventListener('hashchange', restore)
+    window.addEventListener('popstate', restore)
     window.addEventListener('scroll', onScroll, { passive: true })
     window.addEventListener('resize', onScroll)
-    return () => { mounted = false; cancelAnimationFrame(frame); window.removeEventListener('scroll', onScroll); window.removeEventListener('resize', onScroll); clearTimeout(copyTimer.current) }
+    return () => {
+      cancelAnimationFrame(frame)
+      window.removeEventListener('hashchange', restore)
+      window.removeEventListener('popstate', restore)
+      window.removeEventListener('scroll', onScroll)
+      window.removeEventListener('resize', onScroll)
+    }
   }, [])
 
   useEffect(() => {
     if (!menuOpen) return
-    const previousOverflow = document.body.style.overflow
+    const previous = document.body.style.overflow
     document.body.style.overflow = 'hidden'
-    const close = (event: KeyboardEvent) => {
+    const onKey = (event: KeyboardEvent) => {
       if (event.key === 'Escape') { setMenuOpen(false); menuButton.current?.focus() }
       if (event.key === 'Tab') {
-        const lastLink = document.querySelector<HTMLAnchorElement>('#mobile-nav a:last-child')
-        if (event.shiftKey && document.activeElement === menuButton.current) { event.preventDefault(); lastLink?.focus() }
-        else if (!event.shiftKey && document.activeElement === lastLink) { event.preventDefault(); menuButton.current?.focus() }
+        const last = document.querySelector<HTMLAnchorElement>('#mobile-nav a:last-child')
+        if (event.shiftKey && document.activeElement === menuButton.current) { event.preventDefault(); last?.focus() }
+        else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); menuButton.current?.focus() }
       }
     }
-    const media = window.matchMedia('(min-width: 769px)')
+    const media = window.matchMedia('(min-width: 901px)')
     const onResize = () => { if (media.matches) setMenuOpen(false) }
     media.addEventListener('change', onResize)
-    window.addEventListener('keydown', close)
-    return () => { document.body.style.overflow = previousOverflow; window.removeEventListener('keydown', close); media.removeEventListener('change', onResize) }
+    window.addEventListener('keydown', onKey)
+    return () => { document.body.style.overflow = previous; window.removeEventListener('keydown', onKey); media.removeEventListener('change', onResize) }
   }, [menuOpen])
 
-  async function copyEmail() {
-    try { await navigator.clipboard.writeText(email); setCopyStatus('Email copied') }
-    catch { setCopyStatus('Couldn’t copy. Please select the email address.') }
-    clearTimeout(copyTimer.current)
-    copyTimer.current = setTimeout(() => setCopyStatus(''), 3500)
+  function openProject(id: string) {
+    if (!selectedId) {
+      returnFocus.current = document.activeElement instanceof HTMLElement ? document.activeElement : null
+      returnHash.current = window.location.hash.startsWith('#work-') ? '#home' : window.location.hash || '#home'
+    }
+    window.history.pushState(null, '', `#work-${id}`)
+    setSelectedId(id)
+  }
+
+  function closeProject() {
+    window.history.pushState(null, '', returnHash.current)
+    setSelectedId(null)
+    requestAnimationFrame(() => {
+      const target = returnFocus.current?.isConnected ? returnFocus.current : document.getElementById('work-index-title')
+      target?.focus({ preventScroll: true })
+    })
   }
 
   function navigate(id: string) {
@@ -89,72 +110,74 @@ function App() {
     requestAnimationFrame(() => document.getElementById(id)?.focus({ preventScroll: true }))
   }
 
-  const darkSection = ['home', 'experience', 'contact'].includes(active)
+  async function copyEmail() {
+    try { await navigator.clipboard.writeText(email); setCopyStatus('Email copied') }
+    catch { setCopyStatus("Couldn't copy. Please select the address above.") }
+    clearTimeout(copyTimer.current)
+    copyTimer.current = setTimeout(() => setCopyStatus(''), 3500)
+  }
+
+  const visibleProjects = filter === 'Selected'
+    ? selectedProjectIds.map(id => projects.find(project => project.id === id)!)
+    : projects.filter(project => filter === 'All' || project.kind === filter)
+  const project = projects.find(item => item.id === selectedId)
+  const darkSection = active === 'experience'
 
   return <>
-    {loading && <div className="loading-screen" role="status" aria-label="Loading Ryan Tan’s portfolio"><span className="loading-monogram">rt<span>.</span></span><p>RYAN TAN</p><div className="loading-track"><span /></div><span className="loading-caption">Loading portfolio</span></div>}
-    <div inert={loading}>
-    <a className="skip-link" href="#main">Skip to content</a>
-    <nav className={`dot-nav ${darkSection ? 'on-dark' : ''}`} aria-label="Section navigation">
-      <ul>{sections.map(section => <li key={section.id}>
-        <a href={`#${section.id}`} aria-label={section.label} aria-current={active === section.id ? 'location' : undefined} onClick={() => navigate(section.id)}>
-          <span className="dot" /><span className="dot-label">{section.label}</span>
-        </a>
-      </li>)}</ul>
-    </nav>
-    <button ref={menuButton} className={`menu-button ${darkSection || menuOpen ? 'on-dark' : ''}`} aria-label={menuOpen ? 'Close menu' : 'Open menu'} aria-expanded={menuOpen} aria-controls="mobile-nav" onClick={() => setMenuOpen(!menuOpen)}>{menuOpen ? <X /> : <Menu />}</button>
-    <nav id="mobile-nav" className={`mobile-nav ${menuOpen ? 'open' : ''}`} aria-label="Mobile navigation" inert={!menuOpen}>
-      <span className="mobile-name">RYAN TAN</span>
-      {sections.map((section, i) => <a key={section.id} href={`#${section.id}`} onClick={() => navigate(section.id)}><span>0{i + 1}</span>{section.label}</a>)}
-    </nav>
+    {loading && <div className="loading-screen" role="status" aria-label="Loading Ryan Tan's portfolio"><span className="loading-monogram">rt.</span><p>Loading portfolio</p><div className="loading-track"><span /></div></div>}
+    <div className="portfolio" inert={loading}>
+      <a className="skip-link" href="#main">Skip to content</a>
+      <button ref={menuButton} className={`menu-button ${menuOpen ? 'is-open' : ''}`} aria-label={menuOpen ? 'Close menu' : 'Open menu'} aria-expanded={menuOpen} aria-controls="mobile-nav" onClick={() => setMenuOpen(!menuOpen)}>{menuOpen ? <X /> : <Menu />}</button>
+      <nav id="mobile-nav" className={`mobile-nav ${menuOpen ? 'open' : ''}`} aria-label="Mobile navigation" inert={!menuOpen}>
+        <p>Ryan Tan / Index</p>{sections.map((section, i) => <a key={section.id} href={`#${section.id}`} onClick={() => navigate(section.id)}><span>0{i + 1}</span>{section.label}</a>)}
+      </nav>
+      <aside className="identity" aria-label="Introduction" inert={menuOpen}>
+        <div className="identity-top"><a href="#home" className="monogram" aria-label="Ryan Tan, home">rt<span>.</span></a><span className="small-label">Web · Mobile · Cloud<br />2019 — 2026</span></div>
+        <div className="identity-copy"><p className="small-label role-label">Senior Full-Stack Engineer</p><h1>Ryan{' '}<br /><span>Tan<span className="name-period">.</span></span></h1><p className="identity-intro">I build software and take care<br className="wide-break" /> of it after launch.</p><p className="identity-description">Seven years in product engineering, most recently on healthcare web and cloud services at Masimo.</p></div>
+        <div className="identity-bottom"><div className="identity-links"><a className="desktop-about-link" href="#about">A little about me <ArrowRight size={14} /></a><a className="mobile-work-link" href="#home">Browse the work <ArrowDown size={14} /></a><a href="/ryan-tan-resume.pdf" download>Résumé <Download size={14} /></a></div><div className="identity-landscape" aria-hidden="true"><img src="/alps.jpg" alt="" /><span>Room to think.</span></div><div className="identity-location"><span><i /> Based in Singapore</span><a href={`mailto:${email}`}>Say hello <Mail size={13} /></a></div></div>
+      </aside>
+      <nav className={`dot-nav ${darkSection ? 'on-dark' : ''}`} aria-label="Section navigation">
+        <ul>{sections.map(section => <li key={section.id}><a href={`#${section.id}`} aria-label={section.label} aria-current={active === section.id ? 'location' : undefined} onClick={() => navigate(section.id)}><span className="dot" /><span className="dot-label">{section.label}</span></a></li>)}</ul>
+      </nav>
+      <main id="main" tabIndex={-1} inert={menuOpen}>
+        <section id="home" className="work-index" tabIndex={-1} aria-labelledby="work-index-title">
+          <div className="index-masthead"><span className="small-label">Portfolio / Working record</span><span className="index-edition">01—08</span></div>
+          <div className="index-introduction"><div><p className="small-label">Selected projects</p><h2 id="work-index-title" tabIndex={-1}>A working<br /><em>record.</em></h2></div><p>Read about the product<br />and what I worked on.</p></div>
+          <div id="projects" className="project-toolbar"><div className="project-filters" role="group" aria-label="Filter projects">{(['Selected', 'All', 'Web', 'Mobile', 'Services'] as const).map(kind => <button key={kind} aria-pressed={filter === kind} onClick={() => setFilter(kind)}>{kind}<sup>{kind === 'Selected' ? selectedProjectIds.length : kind === 'All' ? projects.length : projects.filter(item => item.kind === kind).length}</sup></button>)}</div></div>
+          <div className="index-column-labels small-label"><span>Project / Company</span><span>Discipline</span></div>
+          <div className="project-index-list">{visibleProjects.map(item => <a className={`project-row ${item.theme}`} key={item.id} href={`#work-${item.id}`} onClick={event => { if (event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return; event.preventDefault(); openProject(item.id) }} aria-label={`Open ${item.title}`}>
+            <span className="record-number">{String(projects.indexOf(item) + 1).padStart(2, '0')}</span>
+            <div className="record-title"><h3>{item.title}</h3><p>{item.company}<span> / </span>{item.period}</p></div>
+            <div className="record-thumbnail"><img src={item.images[0]} alt="" loading="eager" /></div>
+            <span className="record-discipline">{item.id === 'masimo' ? 'Web & cloud' : item.kind}<span>View record</span></span><ArrowRight className="record-arrow" size={19} aria-hidden="true" />
+          </a>)}</div>
+          <div className="index-footer"><p><span className="index-count" aria-live="polite">{visibleProjects.length} of {projects.length} records</span>Dates show my time at each company.</p><a href="#experience">See my experience <ArrowDown size={15} /></a></div>
+        </section>
 
-    <main id="main" inert={menuOpen}>
-      <section id="home" className="hero" tabIndex={-1} aria-labelledby="hero-title">
-        <header className="intro-header"><a href="#home" className="wordmark">RYAN TAN<span> / SOFTWARE ENGINEER</span></a><a href="/ryan-tan-resume.pdf" download className="header-resume">Résumé <Download size={14} /></a></header>
-        <div className="hero-inner">
-          <div className="hero-introduction">
-          <p className="eyebrow">SINGAPORE</p>
-          <h1 id="hero-title">Ryan Tan<span>.</span></h1>
-          <p className="hero-role">Senior Full-Stack Engineer</p>
-          <p className="hero-copy">I build and maintain web, mobile, and cloud applications.<br className="desktop-break" /> My work spans healthcare, financial services, and the public sector.</p>
-          <div className="hero-links"><a href="#projects">View my work</a><a href={`mailto:${email}`}>Get in touch</a><a href={github} target="_blank" rel="noreferrer">GitHub</a></div>
+        <section id="experience" className="experience" tabIndex={-1} aria-labelledby="experience-title">
+          <div className="mountain-background" aria-hidden="true" />
+          <div className="section-content"><div className="section-label"><span>02 / Experience</span><span>2018 — 2026</span></div><h2 id="experience-title">Where I’ve<br /><em>worked.</em></h2><p className="section-intro">I started at Vinova as a student intern and returned after graduating from NUS.</p>
+            <ol className="timeline">{experience.map((job, i) => <li className="timeline-entry" key={job.company + job.role}><div className="timeline-marker" aria-hidden="true">{String(experience.length - i).padStart(2, '0')}</div><article className="timeline-card"><p className="timeline-date">{job.date}</p><div className="timeline-heading"><h3>{job.company}</h3>{job.type && <span>{job.type}</span>}</div><p className="timeline-role">{job.role}</p><p className="timeline-summary">{job.summary}</p><ul>{job.contributions.map(item => <li key={item}>{item}</li>)}</ul><span className="timeline-location">{job.location}</span></article></li>)}</ol>
+            <a className="text-link light" href="/ryan-tan-resume.pdf" download>Download my résumé <Download size={16} /></a><p className="photo-credit">Austrian Alps / <a href="https://unsplash.com/photos/grayscale-photography-of-mountain-HJLlOcoFJcw" target="_blank" rel="noreferrer">Dennis Maliepaard</a></p>
           </div>
-          <aside className="hero-work" aria-label="Featured project preview"><p className="eyebrow">A FEW PRODUCTS I’VE WORKED ON</p><a href="#projects" className="hero-preview"><span className="price-preview"><img src="/price-kaki-2.webp" alt="Price Kaki app preview" width="600" height="1300" /></span><span><img src="/fwd-1.png" alt="FWD Tapp app preview" width="375" height="812" /></span></a><div className="hero-work-labels"><span>Price Kaki</span><span>FWD Mobile</span></div><p className="hero-work-note">Consumer technology & insurance</p></aside>
-        </div>
-        <div className="hero-bottom"><span>7+ YEARS OF PROFESSIONAL EXPERIENCE</span><a href="#about" aria-label="Read about Ryan"><span>SCROLL TO EXPLORE</span><ArrowDown size={17} /></a></div>
-      </section>
+        </section>
 
-      <section className="section about" id="about" tabIndex={-1} aria-labelledby="about-title">
-        <div className="section-inner about-layout"><div className="about-sidebar"><p className="eyebrow">ABOUT</p><h2 id="about-title">Hello, I’m Ryan.</h2><span className="section-rule" /><dl className="about-facts"><div><dt>Based in</dt><dd>Singapore</dd></div><div><dt>Experience</dt><dd>7+ years in software</dd></div><div><dt>Working across</dt><dd>Web, mobile & cloud</dd></div><div><dt>Recently at</dt><dd>Masimo · OriginallyUs · Vinova</dd></div></dl><a className="about-resume" href="/ryan-tan-resume.pdf" download>Read my résumé <Download size={14} /></a></div><div className="about-copy"><p className="lead">I’m a software engineer based in Singapore, with seven years of experience working on products from development through to production support.</p><p>I started out at Vinova while studying computer science at NUS, then returned as a full-stack developer after graduating. My work there included FWD Mobile and other financial and public-sector applications.</p><p>At OriginallyUs, I spent four years building and maintaining mobile apps, web applications, and backend services. I contributed to Price Kaki after its nationwide launch, including work around community-contributed data and AI-assisted moderation.</p><p>Most recently, I joined Masimo on contract to work on web and cloud services for connected patient monitoring. My role covered feature development, releases, and maintaining services that were already in use.</p><div className="education"><GraduationCap size={24} strokeWidth={1.4} /><div><strong>National University of Singapore</strong><span>Bachelor of Computing (Honours), Computer Science</span><span>2015 – 2019</span></div></div></div></div>
-      </section>
+        <section id="about" className="about" tabIndex={-1} aria-labelledby="about-title"><div className="section-content">
+          <div className="section-label"><span>03 / About</span><span>Singapore</span></div>
+          <h2 id="about-title">A little<br /><em>background.</em></h2>
+          <div className="about-copy"><p>I like understanding enough of a system to follow a problem wherever it leads.</p><p>That might mean starting with a React screen and ending up in an API or a database query. Full-stack work suits me because I enjoy making those connections.</p><p>Most of my career has been with teams building software for clients in healthcare, finance, and the public sector. I've learned a lot from working with product managers, designers, and QA, especially when an existing product needs to change while people are still using it.</p></div>
+          <div className="education"><span className="small-label">Education<br />2015 — 2019</span><div><h3>National University of Singapore</h3><p>Bachelor of Computing (Honours)<br />Computer Science</p></div></div>
+          <div id="skills" className="skills"><div className="skills-heading"><h3>What I work with</h3><p>My recent work has centered on TypeScript, React, Node.js, Python, and AWS. Other tools I've used:</p></div>{stack.map(group => <details className="stack-group" key={group.title}><summary>{group.title}<span aria-hidden="true">+</span></summary><ul>{group.items.map(item => <li key={item}>{item}</li>)}</ul></details>)}</div>
+        </div></section>
 
-      <section className="experience" id="experience" tabIndex={-1} aria-labelledby="experience-title">
-        <div className="mountain-background" aria-hidden="true" />
-        <div className="experience-inner"><div className="center-heading"><p className="eyebrow">CAREER</p><h2 id="experience-title">Experience</h2><span className="section-rule" /><p>Seven years across product teams and client projects,<br className="desktop-break" /> from my first development role to senior full-stack engineering.</p></div>
-          <ol className="timeline">{experience.map((job, i) => <li className="timeline-entry" key={`${job.company}-${job.role}`}>
-            <article className="timeline-card"><p className="timeline-company">{job.company}{job.type && <span> · {job.type}</span>}</p><h3>{job.role}</h3><p className="timeline-location">{job.location}</p><p className="timeline-summary">{job.summary}</p><ul>{job.contributions.map(item => <li key={item}>{item}</li>)}</ul></article>
-            <span className="timeline-node" aria-hidden="true">{i === experience.length - 1 ? <GraduationCap size={20} strokeWidth={1.5} /> : <BriefcaseBusiness size={19} strokeWidth={1.5} />}</span>
-            <p className="timeline-date">{job.date}</p>
-          </li>)}</ol>
-          <a href="/ryan-tan-resume.pdf" download className="outline-button">Download my résumé <Download size={15} /></a>
-          <p className="photo-credit">Austrian Alps · <a href="https://unsplash.com/photos/grayscale-photography-of-mountain-HJLlOcoFJcw" target="_blank" rel="noreferrer">Photograph by Dennis Maliepaard</a></p>
-        </div>
-      </section>
-
-      <section className="section projects" id="projects" tabIndex={-1} aria-labelledby="projects-title">
-        <div className="section-inner"><div className="projects-heading"><div><p className="eyebrow">PROJECTS</p><h2 id="projects-title">Selected work</h2><span className="section-rule" /></div><p>A closer look at the applications and services I’ve worked on, and my part in delivering them.</p></div>
-          <div className="project-list">{projects.map((project, i) => <article className="project" key={project.title}>
-            <figure className={`project-visual ${project.theme}`}><div className="project-screens">{project.images.map((src, index) => <a key={src} href={src} target="_blank" rel="noreferrer" aria-label={`Enlarge ${project.title} screenshot ${index + 1}`}><img src={src} alt={project.imageAlt[index]} loading="lazy" width={project.theme.startsWith('web') ? 1440 : project.theme === 'fwd' ? 375 : 600} height={project.theme.startsWith('web') ? 960 : project.theme === 'fwd' ? 812 : 1300} /></a>)}</div><figcaption>{project.imageCredit}</figcaption></figure>
-            <div className="project-copy"><div className="project-meta"><span>0{i + 1} / {project.company}</span><span>{project.period}</span></div><h3>{project.title}</h3><p className="project-category">{project.format}</p><p>{project.description}</p><h4>My contribution</h4><ul>{project.contributions.map(item => <li key={item}>{item}</li>)}</ul><p className="project-tech">{project.technologies.join(' / ')}</p><div className="project-links"><a className="project-primary-link" href={project.url} target="_blank" rel="noreferrer">{project.linkLabel}</a><a href={project.source} target="_blank" rel="noreferrer">{project.sourceLabel}</a></div></div>
-          </article>)}</div>
-        </div>
-      </section>
-
-      <section className="section skills" id="skills" tabIndex={-1} aria-labelledby="skills-title"><div className="section-inner"><p className="eyebrow">TECHNICAL BACKGROUND</p><h2 id="skills-title">Tools & technologies</h2><span className="section-rule" /><div className="stack-grid">{stack.map(group => <div key={group.title}><h3>{group.title}</h3><ul>{group.items.map(item => <li key={item}>{item}</li>)}</ul></div>)}</div></div></section>
-
-      <section className="contact" id="contact" tabIndex={-1} aria-labelledby="contact-title"><div className="section-inner"><div className="contact-layout"><div className="contact-intro"><p className="eyebrow">LET’S CONNECT</p><h2 id="contact-title">Start a conversation.</h2><span className="section-rule" /><p className="contact-copy">Have a role or a project in mind?<br />Send me a little about what you’re working on<br className="desktop-break" /> and where you need an engineer.</p><p className="contact-location">Based in Singapore · UTC+8</p></div><div className="contact-panel"><p className="contact-panel-label">EMAIL</p><a href={`mailto:${email}`} className="email-link">{email}</a><p className="contact-helper">The best way to reach me.</p><div className="contact-actions"><a href={`mailto:${email}?subject=Let%27s%20connect`} className="email-button"><Mail size={17} />Email Ryan</a><button onClick={copyEmail} className="copy-button" aria-label="Copy email address">{copyStatus === 'Email copied' ? <Check size={16} /> : <Copy size={16} />}{copyStatus === 'Email copied' ? 'Copied' : 'Copy email'}</button></div><p className="contact-action-note">Opens your email app. Or copy the address to use it elsewhere.</p><p className="copy-status" role="status">{copyStatus}</p><div className="contact-links"><a href={github} target="_blank" rel="noreferrer"><Github size={17} />Find me on GitHub</a><a href="/ryan-tan-resume.pdf" download><Download size={17} />Download résumé</a></div></div></div><footer><span>© {new Date().getFullYear()} Ryan Tan</span><span>Singapore</span><a href="#home">Back to top</a></footer></div></section>
-    </main>
+        <section id="contact" className="contact" tabIndex={-1} aria-labelledby="contact-title"><div className="section-content">
+          <div className="section-label"><span>04 / Contact</span><span>Singapore / UTC+8</span></div><p className="contact-prelude">For roles, projects, or a quick introduction</p><h2 id="contact-title">Let’s<br /><em>talk.</em></h2><p className="contact-copy">Send me a note about your team or what you're building.<br className="wide-break" /> I'll be glad to hear from you.</p>
+          <div className="contact-panel"><a href={`mailto:${email}`} className="email-link">{email}</a><div className="contact-actions"><a href={`mailto:${email}?subject=Let%27s%20connect`} className="email-button"><Mail size={16} />Email Ryan</a><button onClick={copyEmail} className="copy-button" aria-label="Copy email address">{copyStatus === 'Email copied' ? <Check size={16} /> : <Copy size={16} />}{copyStatus === 'Email copied' ? 'Copied' : 'Copy address'}</button></div><p className="copy-status" role="status">{copyStatus}</p></div>
+          <div className="contact-links"><a href={github} target="_blank" rel="noreferrer"><Github size={16} />Find me on GitHub</a><a href="/ryan-tan-resume.pdf" download><Download size={16} />Download résumé</a></div><footer><span>© {new Date().getFullYear()} Ryan Tan</span><a href="#home"><ArrowLeft size={14} /> Back to the work</a></footer>
+        </div></section>
+      </main>
     </div>
+    {!loading && <ProjectReader project={project} onClose={closeProject} onSelect={openProject} />}
   </>
 }
 
